@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+openai
+redis
+sqlalchemy
+psycopg2-binary
+better-profanity
+httpx
+pytest
+pytest-asyncio
+aioredis
+asyncpg
+streamlit
