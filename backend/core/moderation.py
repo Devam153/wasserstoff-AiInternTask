@@ -1,44 +1,47 @@
-from better_profanity import profanity
-from typing import Tuple
-import re
 
-# Initialize profanity filter
+from better_profanity import profanity
+import re
+from typing import List, Set
+
+# Initialize profanity filter with extra censored words if needed
 profanity.load_censor_words()
 
-# Add additional disallowed content patterns
-DISALLOWED_PATTERNS = [
-    r'(^|\s)hack(\s|$|ing)',  # Hacking-related content
-    r'(^|\s)(admin|password)(\s|$)',  # Security-sensitive terms
-    r'<script>',  # Basic XSS prevention
-    r'function\(\)',  # JavaScript code
-    r'SELECT.*FROM',  # SQL injection attempt
+# Additional disallowed words (can be expanded)
+DISALLOWED_WORDS: Set[str] = {
+    "slur", "explicit", "offensive"
+}
+
+# Regex patterns for content that should be flagged
+DANGEROUS_PATTERNS = [
+    r"(^|\s)kill(\s|$|ing|ed)",
+    r"(^|\s)harm(\s|$|ing|ed)",
+    r"(^|\s)hurt(\s|$|ing|ed)",
+    r"(^|\s)injure(\s|$|ing|ed)",
 ]
 
-def check_content(text: str) -> Tuple[bool, str]:
+def check_content(text: str) -> bool:
     """
-    Check if content contains disallowed text.
+    Check if content contains profanity or disallowed content
+    Returns True if content should be blocked
+    """
+    if not text or not isinstance(text, str):
+        return False
     
-    Args:
-        text: The text to check
-        
-    Returns:
-        Tuple of (is_safe, reason)
-    """
+    # Convert to lowercase for case-insensitive matching
+    text_lower = text.lower()
+    
     # Check for profanity
     if profanity.contains_profanity(text):
-        return False, "Contains inappropriate language"
+        return True
     
-    # Check for other disallowed patterns
-    for pattern in DISALLOWED_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return False, "Contains disallowed content"
+    # Check for disallowed words
+    for word in DISALLOWED_WORDS:
+        if word in text_lower.split():
+            return True
     
-    # Check for empty or too short input
-    if not text or len(text.strip()) < 2:
-        return False, "Input is too short"
+    # Check for dangerous patterns
+    for pattern in DANGEROUS_PATTERNS:
+        if re.search(pattern, text_lower):
+            return True
     
-    # Check for too long input
-    if len(text) > 50:
-        return False, "Input is too long (max 50 characters)"
-    
-    return True, ""
+    return False

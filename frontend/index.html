@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>What Beats Rock - AI Game</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>What Beats <span class="highlight">Rock</span>?</h1>
+            <p>Can you create the ultimate chain of things that beat each other?</p>
+        </header>
+
+        <div class="game-controls">
+            <div class="seed-input">
+                <input type="text" id="seed-word" placeholder="Start with a word (default: rock)">
+                <button id="start-game">New Game</button>
+            </div>
+            <div class="persona-selector">
+                <label for="persona">Host Style:</label>
+                <select id="persona">
+                    <option value="serious">Serious</option>
+                    <option value="cheery">Cheery</option>
+                </select>
+            </div>
+        </div>
+
+        <main class="game-area">
+            <div id="current-word-display">
+                <h2>Current Word: <span id="current-word">Start a New Game</span></h2>
+            </div>
+
+            <div id="guess-form">
+                <input type="text" id="guess-input" placeholder="What beats this?" disabled>
+                <button id="submit-guess" disabled>Guess!</button>
+            </div>
+
+            <div id="result-message" class="hidden"></div>
+
+            <div class="game-stats">
+                <div class="stats-box">
+                    <h3>Your Score</h3>
+                    <span id="score">0</span>
+                </div>
+                <div class="stats-box">
+                    <h3>Times Guessed</h3>
+                    <span id="global-count">0</span>
+                </div>
+            </div>
+
+            <div class="history">
+                <h3>Recent Guesses:</h3>
+                <ul id="guesses-list"></ul>
+            </div>
+        </main>
+
+        <div id="confetti-container"></div>
+
+        <div class="modal" id="game-over-modal">
+            <div class="modal-content">
+                <h2>Game Over!</h2>
+                <p id="game-over-message"></p>
+                <p>Your final score: <span id="final-score">0</span></p>
+                <button id="play-again">Play Again</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

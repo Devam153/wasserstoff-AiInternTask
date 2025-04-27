@@ -13,3 +13,4 @@ pytest-asyncio
 aioredis
 asyncpg
 streamlit
+motor

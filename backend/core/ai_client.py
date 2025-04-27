@@ -1,54 +1,80 @@
+
 import os
 import google.generativeai as genai
-from typing import Tuple, Dict, Any, Optional
+from typing import Dict, Any
 import json
-import asyncio
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 # Configure Gemini API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY", ""))
+api_key = os.getenv("GEMINI_API_KEY", "")
+if not api_key:
+    raise ValueError("GEMINI_API_KEY environment variable not set")
 
-async def get_ai_response(guess: str, current_word: str, persona: str = "serious") -> bool:
-    """
-    Ask the AI whether guess beats current_word using Gemini.
-    Returns True if guess beats current_word, False otherwise.
-    """
+genai.configure(api_key=api_key)
+model = genai.GenerativeModel('gemini-pro')
+
+SERIOUS_PROMPT = """
+You are a judge for a game called "What Beats What". 
+Given a guess (X) and a word (Y), determine if X beats Y based on logical relationships, physics, common sense, or general knowledge.
+Respond with a JSON object with these fields:
+- valid: a boolean indicating if X beats Y (true or false)
+- explanation: a brief explanation of your reasoning (max 15 words)
+
+Examples:
+- Paper beats Rock: {"valid": true, "explanation": "Paper covers rock"}
+- Scissors beats Paper: {"valid": true, "explanation": "Scissors cut paper"}
+- Rock beats Scissors: {"valid": true, "explanation": "Rock crushes scissors"}
+- Flame beats Paper: {"valid": true, "explanation": "Fire burns paper"}
+
+Think logically about physical properties, common knowledge relationships, or commonly accepted hierarchies. Be consistent.
+Respond ONLY with a JSON object, nothing else.
+"""
+
+CHEERY_PROMPT = """
+You are an ENTHUSIASTIC and FUN judge for a game called "What Beats What"!!! 😄🎮
+Given a guess (X) and a word (Y), decide if X beats Y using logic, physics, pop culture, or just good fun! 
+Be CREATIVE but fair!
+
+Respond with a JSON object:
+- valid: a boolean showing if X beats Y (true or false)
+- explanation: a FUN, ENTHUSIASTIC explanation (max 15 words) with emojis!
+
+Examples:
+- Paper beats Rock: {"valid": true, "explanation": "Paper WRAPS that rock up tight! 📃✨"}
+- Scissors beats Paper: {"valid": true, "explanation": "SNIP SNIP! Paper gets cut to pieces! ✂️💯"}
+- Water beats Fire: {"valid": true, "explanation": "SPLASH! Fire gets extinguished! 💧🔥"}
+
+Be CREATIVE, ENERGETIC, and ready to HAVE FUN! Use EMOJIS and keep it EXCITING!
+Respond ONLY with a JSON object, nothing else.
+"""
+
+async def get_ai_response(guess: str, word: str, persona: str = "serious") -> Dict[str, Any]:
+    """Get response from Gemini AI"""
     try:
-        # Get the appropriate system prompt based on persona
-        system_prompt = get_system_prompt(persona)
+        prompt = SERIOUS_PROMPT if persona.lower() == "serious" else CHEERY_PROMPT
         
-        # Create the model
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        # Construct the prompt for Gemini
+        content = f"{prompt}\n\nGuess (X): {guess}\nWord (Y): {word}"
         
-        # Create the prompt
-        prompt = f"{system_prompt}\n\nDoes '{guess}' beat '{current_word}'? Answer YES or NO only."
+        response = model.generate_content(content)
         
-        # Generate response
-        response = await asyncio.to_thread(
-            model.generate_content,
-            prompt
-        )
-        
-        # Extract the text and check for YES
-        answer = response.text.strip().upper()
-        return "YES" in answer
-        
+        # Parse the response
+        try:
+            # Extract JSON from response
+            response_text = response.text
+            result = json.loads(response_text)
+            
+            # Validate response structure
+            if not isinstance(result, dict) or "valid" not in result or "explanation" not in result:
+                return {"valid": False, "explanation": "AI response format error"}
+                
+            return result
+        except json.JSONDecodeError:
+            # Fallback parsing if JSON extraction fails
+            response_text = response.text.lower()
+            valid = "true" in response_text and "valid" in response_text
+            explanation = "Based on AI judgment"
+            return {"valid": valid, "explanation": explanation}
+            
     except Exception as e:
-        print(f"Error in Gemini AI response: {str(e)}")
-        # Graceful degradation - flip a coin if AI fails
-        import random
-        return random.choice([True, False])
-
-def get_system_prompt(persona: str) -> str:
-    """Return the appropriate system prompt based on the selected persona."""
-    if persona == "cheery":
-        return """You are the enthusiastic host of a fun word game called 'What Beats What'! 
-                Your job is to decide if one thing can beat another. Be creative but consistent! 
-                Answer only YES or NO."""
-    else:  # default to serious
-        return """You are the logical judge of a word game. 
-                Determine if the first item can defeat or overcome the second item. 
-                Use common sense relationships. Answer only YES or NO."""
+        print(f"Error in AI response: {str(e)}")
+        return {"valid": False, "explanation": "Error connecting to AI service"}

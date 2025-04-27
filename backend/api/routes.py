@@ -1,199 +1,126 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
-import uuid
-import json
+from fastapi.responses import JSONResponse
 
-from backend.core.game_logic import validate_guess, get_game_session, create_game_session
+from backend.core.game_logic import GameSession, validate_beats
 from backend.core.ai_client import get_ai_response
 from backend.core.moderation import check_content
-from backend.db.models import increment_guess_count, get_guess_count
+from backend.db.models import update_global_counter, get_global_counter, create_game_session, get_game_session
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["game"])
 
 class GuessRequest(BaseModel):
     guess: str
-    session_id: Optional[str] = None
-
-class GameResponse(BaseModel):
-    success: bool
-    message: str
     session_id: str
+
+class GuessResponse(BaseModel):
+    valid: bool
+    message: str
     current_word: str
     score: int
-    game_over: bool
-    guess_history: List[str]
-    global_count: int = 0
-
-@router.post("/start")
-async def start_game(request: Request):
-    """Start a new game session with 'Rock' as the seed word."""
-    session_id = str(uuid.uuid4())
-    session = await create_game_session(session_id, "Rock")
-    
-    return {
-        "success": True,
-        "message": "Game started! Try to guess what beats 'Rock'.",
-        "session_id": session_id,
-        "current_word": "Rock",
-        "score": 0,
-        "game_over": False,
-        "guess_history": []
-    }
+    previous_guesses: List[str]
+    global_count: int
 
 @router.post("/guess")
 async def make_guess(
-    guess_request: GuessRequest, 
-    request: Request,
-    x_persona: Optional[str] = Header("serious")
+    guess_request: GuessRequest,
+    persona: Optional[str] = Header("serious")
 ):
-    """Submit a guess for what beats the current word."""
-    # Get session
-    if not guess_request.session_id:
-        raise HTTPException(status_code=400, detail="Session ID is required")
+    guess = guess_request.guess.strip().lower()
+    session_id = guess_request.session_id
     
-    session = await get_game_session(guess_request.session_id)
-    if not session:
+    # Check for profanity
+    if check_content(guess):
+        raise HTTPException(status_code=400, detail="Inappropriate content detected")
+    
+    # Get game session
+    game_session = await get_game_session(session_id)
+    
+    if not game_session:
         raise HTTPException(status_code=404, detail="Game session not found")
     
-    # Check if game is already over
-    if session.get("game_over", False):
-        return {
-            "success": False,
-            "message": "Game is already over!",
-            "session_id": guess_request.session_id,
-            "current_word": session["current_word"],
-            "score": session["score"],
-            "game_over": True,
-            "guess_history": session["history"]
-        }
+    # Get current word (the last guess or the seed)
+    current_word = game_session["current_word"]
     
-    # Validate the input (moderation check)
-    guess = guess_request.guess.strip()
-    is_safe, reason = check_content(guess)
-    if not is_safe:
-        return {
-            "success": False,
-            "message": f"Your guess was flagged: {reason}",
-            "session_id": guess_request.session_id,
-            "current_word": session["current_word"],
-            "score": session["score"],
-            "game_over": False,
-            "guess_history": session["history"]
-        }
+    # Check if the guess beats the current word
+    result = await validate_beats(guess, current_word, persona)
     
-    # Process the guess
-    current_word = session["current_word"]
-    
-    # Check if this guess is a duplicate in the session
-    if guess.lower() in [item.lower() for item in session["history"]]:
-        # Update session as game over
-        await validate_guess(
-            guess_request.session_id, 
-            guess, 
-            current_word, 
-            is_valid=False, 
-            game_over=True, 
-            reason="duplicate"
-        )
-        
+    if not result["valid"]:
+        message = f"❌ Sorry, \"{guess}\" doesn't beat \"{current_word}\"."
         return {
-            "success": False,
-            "message": f"Game Over! You already guessed '{guess}'.",
-            "session_id": guess_request.session_id,
+            "valid": False,
+            "message": message,
             "current_word": current_word,
-            "score": session["score"],
-            "game_over": True,
-            "guess_history": session["history"]
+            "score": game_session["score"],
+            "previous_guesses": game_session["guesses"][-5:] if "guesses" in game_session else [],
+            "global_count": 0
         }
     
-    # Get AI validation
-    redis = request.app.state.redis
-    cache_key = f"validation:{current_word.lower()}:{guess.lower()}"
+    # Check if the guess is already in the linked list
+    if guess in game_session["guesses"]:
+        return {
+            "valid": False,
+            "message": f"🎮 Game Over! \"{guess}\" was already guessed.",
+            "current_word": current_word,
+            "score": game_session["score"],
+            "previous_guesses": game_session["guesses"][-5:],
+            "global_count": await get_global_counter(guess)
+        }
     
-    # Check cache first
-    cached_result = await redis.get(cache_key)
-    if cached_result:
-        is_valid = json.loads(cached_result)["is_valid"]
-    else:
-        # If not in cache, ask the AI
-        is_valid = await get_ai_response(guess, current_word, persona=x_persona)
-        
-        # Cache the result
-        await redis.set(
-            cache_key, 
-            json.dumps({"is_valid": is_valid}),
-            expire=3600  # Cache for 1 hour
-        )
+    # Update global counter
+    global_count = await update_global_counter(guess)
     
-    # Update game state based on validation
-    result = await validate_guess(
-        guess_request.session_id, 
-        guess, 
-        current_word, 
-        is_valid=is_valid,
-        game_over=False
-    )
+    # Update game session
+    game_session["guesses"].append(guess)
+    game_session["current_word"] = guess
+    game_session["score"] += 1
     
-    # Update global counter for this guess if valid
-    global_count = 0
-    if is_valid:
-        global_count = await increment_guess_count(guess)
-    else:
-        global_count = await get_guess_count(guess)
+    await create_game_session(session_id, game_session)
     
-    # Generate response based on persona
-    if is_valid:
-        if x_persona == "cheery":
-            message = f"✨ Woohoo! '{guess}' totally beats '{current_word}'! Your guess has been made {global_count} times before. Keep going! 🎉"
-        else:  # serious persona
-            message = f"✅ Correct. '{guess}' beats '{current_word}'. This answer has been submitted {global_count} times globally."
-    else:
-        if x_persona == "cheery":
-            message = f"Aww, sorry! It seems '{guess}' doesn't beat '{current_word}'. Try something else! 🤔"
-        else:  # serious persona
-            message = f"Incorrect. '{guess}' does not beat '{current_word}'. Please try again."
-    
-    # Get updated session
-    updated_session = await get_game_session(guess_request.session_id)
+    message = f"✅ Nice! \"{guess}\" beats \"{current_word}\". {guess} has been guessed {global_count} times before."
     
     return {
-        "success": is_valid,
+        "valid": True,
         "message": message,
-        "session_id": guess_request.session_id,
-        "current_word": updated_session["current_word"] if is_valid else current_word,
-        "score": updated_session["score"],
-        "game_over": updated_session.get("game_over", False),
-        "guess_history": updated_session["history"],
+        "current_word": guess,
+        "score": game_session["score"],
+        "previous_guesses": game_session["guesses"][-5:],
         "global_count": global_count
+    }
+
+@router.post("/new-game")
+async def new_game(seed_word: str = "rock"):
+    seed_word = seed_word.strip().lower()
+    
+    # Check for profanity in seed word
+    if check_content(seed_word):
+        raise HTTPException(status_code=400, detail="Inappropriate content detected in seed word")
+    
+    # Create a new game session
+    session_id = await create_game_session(None, {
+        "current_word": seed_word,
+        "guesses": [seed_word],
+        "score": 0
+    })
+    
+    return {
+        "session_id": session_id,
+        "current_word": seed_word,
+        "message": f"Game started with seed word: {seed_word}",
+        "previous_guesses": [seed_word],
+        "score": 0
     }
 
 @router.get("/history/{session_id}")
 async def get_history(session_id: str):
-    """Get the guess history for a specific game session."""
-    session = await get_game_session(session_id)
-    if not session:
+    game_session = await get_game_session(session_id)
+    
+    if not game_session:
         raise HTTPException(status_code=404, detail="Game session not found")
     
     return {
-        "session_id": session_id,
-        "current_word": session["current_word"],
-        "score": session["score"],
-        "game_over": session.get("game_over", False),
-        "guess_history": session["history"]
+        "current_word": game_session["current_word"],
+        "guesses": game_session["guesses"],
+        "score": game_session["score"]
     }
-
-@router.get("/stats/{guess}")
-async def get_guess_statistics(guess: str):
-    """Get global statistics for a specific guess."""
-    count = await get_guess_count(guess)
-    return {
-        "guess": guess,
-        "global_count": count
-    }
-
-@router.delete("/reset/{session_id}")
-async def reset_game(session_id: str):
-    """Reset a game session (for testing purposes)."""
-    await create_game_session(session_id, "Rock")
-    return {"message": f"Game session {session_id} has been reset."}

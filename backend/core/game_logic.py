@@ -1,90 +1,65 @@
-from typing import Dict, List, Optional, Tuple, Any
-import json
+
+from typing import Dict, Any, List, Optional
 import uuid
-from backend.db.models import save_game_session, get_game_session
+from fastapi import Request
 
-class GameNode:
-    """A node in our linked list representing a valid guess."""
-    def __init__(self, value: str):
-        self.value = value
-        self.next = None
+from backend.core.ai_client import get_ai_response
+from backend.core.cache import make_cache_key, get_cache, set_cache
 
-class GameLinkedList:
-    """A linked list to store the sequence of valid guesses."""
-    def __init__(self, seed: str = "Rock"):
-        self.head = GameNode(seed)
-        self.tail = self.head
+class GameSession:
+    def __init__(self, seed_word: str = "rock"):
+        self.id = str(uuid.uuid4())
+        self.current_word = seed_word.lower()
+        self.guesses = [seed_word.lower()]  # The linked list is represented as a list in order
+        self.score = 0
     
-    def append(self, value: str) -> None:
-        """Add a new node at the end of the linked list."""
-        new_node = GameNode(value)
-        self.tail.next = new_node
-        self.tail = new_node
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert game session to dictionary for storage"""
+        return {
+            "id": self.id,
+            "current_word": self.current_word,
+            "guesses": self.guesses,
+            "score": self.score
+        }
     
-    def contains(self, value: str) -> bool:
-        """Check if the linked list contains a specific value."""
-        current = self.head
-        while current:
-            if current.value.lower() == value.lower():
-                return True
-            current = current.next
-        return False
-    
-    def to_list(self) -> List[str]:
-        """Convert the linked list to a regular list."""
-        result = []
-        current = self.head
-        while current:
-            result.append(current.value)
-            current = current.next
-        return result
-
-async def create_game_session(session_id: str, seed_word: str = "Rock") -> Dict:
-    """Create a new game session with initial seed word."""
-    game_list = GameLinkedList(seed_word)
-    session = {
-        "session_id": session_id,
-        "current_word": seed_word,
-        "score": 0,
-        "history": [seed_word],
-        "game_over": False,
-        "valid_guesses": [seed_word]
-    }
-    # Save to MongoDB
-    await save_game_session(session_id, session)
-    return session
-
-async def validate_guess(
-    session_id: str, 
-    guess: str, 
-    current_word: str, 
-    is_valid: bool, 
-    game_over: bool = False,
-    reason: str = ""
-) -> Dict:
-    """
-    Validate a guess and update the game state.
-    """
-    session = await get_game_session(session_id)
-    if not session:
-        return None
-    
-    # Update game history
-    if guess not in session["history"]:
-        session["history"].append(guess)
-    
-    # Check if game should end
-    if game_over:
-        session["game_over"] = True
-        await save_game_session(session_id, session)
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'GameSession':
+        """Create game session from dictionary"""
+        session = cls(data.get("current_word", "rock"))
+        session.id = data.get("id", str(uuid.uuid4()))
+        session.guesses = data.get("guesses", [session.current_word])
+        session.score = data.get("score", 0)
         return session
     
-    # If AI says guess is valid
-    if is_valid:
-        session["valid_guesses"].append(guess)
-        session["score"] += 1
-        session["current_word"] = guess
+    def add_guess(self, guess: str) -> bool:
+        """Add a guess to the linked list if it doesn't exist already"""
+        guess = guess.lower()
+        if guess in self.guesses:
+            return False  # Game over, duplicate guess
         
-    # Save updated session
-    await save_game_session(session_id, session)
-    return session
+        self.guesses.append(guess)
+        self.current_word = guess
+        self.score += 1
+        return True
+
+async def validate_beats(guess: str, current_word: str, persona: str = "serious") -> Dict[str, Any]:
+    """Validate if the guess beats the current word using AI"""
+    # Check cache first
+    from fastapi import Request
+    request = Request({})  # Create a dummy request to access app state
+    if hasattr(request.app, "state") and hasattr(request.app.state, "redis"):
+        redis_client = request.app.state.redis
+        cache_key = make_cache_key(guess, current_word, persona)
+        cached_result = await get_cache(redis_client, cache_key)
+        
+        if cached_result:
+            return cached_result
+    
+    # If not in cache, get from AI
+    result = await get_ai_response(guess, current_word, persona)
+    
+    # Store in cache
+    if hasattr(request.app, "state") and hasattr(request.app.state, "redis"):
+        await set_cache(redis_client, cache_key, result)
+    
+    return result
