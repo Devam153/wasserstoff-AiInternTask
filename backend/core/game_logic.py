@@ -44,11 +44,12 @@ class GameSession:
 
 async def validate_beats(guess: str, current_word: str, persona: str = "serious") -> Dict[str, Any]:
     """Validate if the guess beats the current word using AI"""
-    # Check cache first
-    from fastapi import Request
-    request = Request({})  # Create a dummy request to access app state
-    if hasattr(request.app, "state") and hasattr(request.app.state, "redis"):
-        redis_client = request.app.state.redis
+    # Import here to avoid circular imports
+    from backend.main import app
+    
+    # Check cache if Redis is available
+    if hasattr(app.state, "redis"):
+        redis_client = app.state.redis
         cache_key = make_cache_key(guess, current_word, persona)
         cached_result = await get_cache(redis_client, cache_key)
         
@@ -58,8 +59,9 @@ async def validate_beats(guess: str, current_word: str, persona: str = "serious"
     # If not in cache, get from AI
     result = await get_ai_response(guess, current_word, persona)
     
-    # Store in cache
-    if hasattr(request.app, "state") and hasattr(request.app.state, "redis"):
+    # Store in cache if Redis is available
+    if hasattr(app.state, "redis"):
+        redis_client = app.state.redis
         await set_cache(redis_client, cache_key, result)
     
     return result
