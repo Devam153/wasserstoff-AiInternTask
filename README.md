@@ -4,50 +4,6 @@
 
 A Generative AI-powered game where players try to guess what "beats" a given word.
 
-## Table of Contents
-
-- [Setup Instructions](#setup-instructions)
-- [How to Play](#how-to-play)
-- [Architectural Choices](#architectural-choices)
-- [Prompt Design](#prompt-design)
-
-## Setup Instructions
-
-### Prerequisites
-
-- Docker and Docker Compose
-- OpenAI API key
-
-### Quick Start with Docker Compose
-
-1. Clone this repository:
-
-   ```
-   git clone <repository-url>
-   cd genai-intern-game
-   ```
-
-2. Create a `.env` file in the root directory with your OpenAI API key:
-
-   ```
-   OPENAI_API_KEY=your_openai_api_key_here
-   ```
-
-3. Start the application with Docker Compose:
-
-   ```
-   docker-compose up
-   ```
-
-4. Access the applications:
-   - Web UI: [http://localhost:8080](http://localhost:8080)
-   - Streamlit UI: [http://localhost:8501](http://localhost:8501)
-   - API Documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
-
-### Reset Game State (For Testing)
-
-To reset a game session during testing, send a DELETE request to `/api/reset/{session_id}` endpoint.
-
 ## How to Play
 
 1. The game starts with a seed word (e.g., "Rock").
