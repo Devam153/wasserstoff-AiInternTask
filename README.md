@@ -61,7 +61,3 @@ This project includes:
 - Create a multiplayer mode
 - Optimize Redis cache eviction policies
 - Add more advanced animations and visual feedback
-
----
-
-© 2024 - Built as an internship task for Wasserstoff
